@@ -72,6 +72,7 @@ module ActiveSnapshot
       ActiveRecord::Base.transaction do
         ### Cache the child snapshots in a variable for re-use
         cached_snapshot_items = snapshot_items.includes(:item)
+        cached_snapshot_items = order_snapshot_items(cached_snapshot_items)
 
         existing_snapshot_children = item ? item.children_to_snapshot : []
 
@@ -108,6 +109,44 @@ module ActiveSnapshot
       end
 
       return true
+    end
+
+    private
+
+    def order_snapshot_items(items)
+      deps = {}
+      items_by_id = items.group_by(&:item_id)
+
+      items.each do |si|
+        deps[si] = []
+        klass = si.item_type.constantize
+        klass.reflect_on_all_associations(:belongs_to).each do |ref|
+          next if ref.options[:polymorphic]
+          parent_id = si.object[ref.foreign_key.to_s]
+          next unless parent_id
+          parents = items_by_id[parent_id]
+          next unless parents
+          parents.each do |candidate|
+            if candidate.item_type.constantize <= ref.klass
+              deps[si] << candidate
+            end
+          end
+        end
+      end
+
+      ordered = []
+      visited = {}
+
+      visit = lambda do |node|
+        return if visited[node]
+        visited[node] = true
+        deps[node].each { |d| visit.call(d) }
+        ordered << node
+      end
+
+      items.each { |si| visit.call(si) }
+
+      ordered
     end
 
     def fetch_reified_items(readonly: true)
