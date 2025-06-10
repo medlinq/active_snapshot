@@ -209,6 +209,30 @@ class SnapshotTest < ActiveSupport::TestCase
     end
   end
 
+  def test_restore_respects_foreign_key_order
+    post = Post.create!(a: 5, b: 5)
+    comment = post.comments.create!(content: "foo")
+    snapshot = post.create_snapshot!(identifier: "fk-order")
+
+    comment.destroy!
+    post.destroy!
+
+    order = []
+
+    snapshot.snapshot_items.each do |si|
+      allow(si).to receive(:restore_item!).and_wrap_original do |m, *args|
+        order << si.item_type
+        m.call(*args)
+      end
+    end
+
+    snapshot.restore!
+
+    assert_equal ["Post", "Comment"], order.take(2)
+    assert Post.find_by(id: post.id)
+    assert_equal 1, Post.find(post.id).comments.count
+  end
+
   def test_single_model_snapshots_without_children
     instance = ParentWithoutChildren.create!({a: 1, b: 2})
 
